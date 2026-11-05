@@ -65,7 +65,8 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk "out/PhysicsChess-${VERSION}.apk"
+          # 未配置签名时 AGP 产出 app-release-unsigned.apk，这里统一按通配符取
+          cp app/build/outputs/apk/release/*.apk "out/PhysicsChess-${VERSION}.apk"
 
       - name: Check signature
         if: steps.sign.outputs.signed == 'true'
