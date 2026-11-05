@@ -1,7 +1,7 @@
 ﻿# Physics Chess（弹棋）—— 开发进度存档
 
 > 复刻自 `CrazyChess v1.3.2.apk`（AndEngine + Box2D 物理象棋）。
-> 原版逻辑分析见 `D:\whaletest\CrazyChess_逻辑分析.md`。
+> 原版的逆向分析笔记没有入库（当时是同一次会话里另存的 Markdown）。
 >
 > 本文件统一使用 **UTF-8（带 BOM）** 保存，Windows 记事本 / VS Code 都能正确识别中文。
 
@@ -150,7 +150,22 @@ app/src/main/java/dev/whale/crazychess/
 
 ---
 
-## 六、待办 / 可选打磨
+## 六、仓库与自动构建
+
+| 项 | 值 |
+| --- | --- |
+| 远程仓库 | https://github.com/Mr-Karry/physics-chess （private） |
+| 主分支 | `main` |
+| Release | `v1.0` → `PhysicsChess-1.0.apk` |
+| CI | `.github/workflows/release.yml`（workflow：Android Release） |
+
+- 推 `v*` 标签或手动 `Run workflow` 即触发：构建 release APK → 校验签名 → 上传 Actions 产物 → 挂到对应 Release。
+- 签名材料走 Secrets（`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`）；未配置时只出未签名产物、不发布。
+- 已用标签 `v0.0.1-ci` 跑通一次：构建、重命名、上传产物全部成功，签名校验与发布按设计跳过（事后已删除该测试标签）。
+
+---
+
+## 七、待办 / 可选打磨
 
 1. **棋子贴图**：现用 ♟♜♞♝♛♚ 字形绘制，可换成矢量棋子或原版 army1 / army2 风格资源。
 2. **AI 强度曲线**：三档差异目前只在精度与力度（约 36% / 44% / 54% 的每手吃子率），可再加"轻松不打王""凶狠预演候选线路"。
