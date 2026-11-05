@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="docs/00-icon.png" width="112" alt="弹棋图标" />
+<img src="docs/00-icon.png" width="112" alt="Physics Chess 图标" />
 
-# 弹棋 · Physics Chess
+# Physics Chess
 
 **把棋子甩出去，把对手的王撞出棋盘。**
 
-Kotlin + Jetpack Compose + Material 3 Expressive 重写的物理象棋小游戏，
+（中文名：弹棋）· Kotlin + Jetpack Compose + Material 3 Expressive 重写的物理象棋小游戏，
 复刻自 Android 老游戏 `CrazyChess v1.3.2`（AndEngine + Box2D）。
 
 </div>

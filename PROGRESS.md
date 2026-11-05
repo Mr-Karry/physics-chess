@@ -1,4 +1,4 @@
-﻿# 弹棋 / Physics Chess —— 开发进度存档
+﻿# Physics Chess（弹棋）—— 开发进度存档
 
 > 复刻自 `CrazyChess v1.3.2.apk`（AndEngine + Box2D 物理象棋）。
 > 原版逻辑分析见 `D:\whaletest\CrazyChess_逻辑分析.md`。
