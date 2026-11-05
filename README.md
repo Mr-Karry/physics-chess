@@ -4,6 +4,11 @@
 
 # Physics Chess
 
+![release](https://img.shields.io/badge/release-v1.0-5B6CE8)
+![platform](https://img.shields.io/badge/Android-7.0%2B-3DDC84)
+![kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF)
+![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4)
+
 **把棋子甩出去，把对手的王撞出棋盘。**
 
 （中文名：弹棋）· Kotlin + Jetpack Compose + Material 3 Expressive 重写的物理象棋小游戏，
@@ -82,6 +87,22 @@ adb shell am start -n dev.whale.crazychess/.MainActivity
 ```properties
 kotlin.compiler.execution.strategy=in-process
 ```
+
+## 自动发布
+
+推一个 `v*` 标签（或在 Actions 页手动触发）会走 `.github/workflows/release.yml`：
+构建 release APK → 校验签名 → 上传构建产物 → 挂到对应的 GitHub Release。
+
+签名材料放在仓库 Secrets 里，不随代码分发：
+
+| Secret | 说明 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | keystore 文件的 base64（`[Convert]::ToBase64String([IO.File]::ReadAllBytes("x.keystore"))`） |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore 口令 |
+| `ANDROID_KEY_ALIAS` | 密钥别名 |
+| `ANDROID_KEY_PASSWORD` | 密钥口令 |
+
+没配 `ANDROID_KEYSTORE_BASE64` 时流程仍会构建，但只上传未签名 APK 到 Actions 产物，不会发布 Release。
 
 ## 目录
 
