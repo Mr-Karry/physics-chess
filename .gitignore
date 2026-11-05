@@ -1,0 +1,31 @@
+# Gradle / Android
+.gradle/
+.kotlin/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+
+# 本机路径与签名材料（不要进仓库）
+local.properties
+*.jks
+*.keystore
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# 打包产物
+*.apk
+*.aab
+*.aar
+!docs/*.apk
+
+# 系统
+.DS_Store
+Thumbs.db

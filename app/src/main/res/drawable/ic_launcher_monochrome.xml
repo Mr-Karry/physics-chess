@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单色层（Android 13 主题图标）：系统用壁纸取到的颜色给这一层上色，
+  所以「环 + 王冠」会跟着用户的动态取色方案变化。
+  外圆 + 内圆用 evenOdd 挖空成圆环，王冠单独一层填在环内。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M54,25 a29,29 0 1,0 0.01,0 z
+                          M54,34 a20,20 0 1,0 0.01,0 z"
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd" />
+
+    <path
+        android:pathData="M41,65.5 h26 v4.2 a2.1,2.1 0 0 1 -2.1,2.1 h-21.8 a2.1,2.1 0 0 1 -2.1,-2.1 z"
+        android:fillColor="#FFFFFF" />
+
+    <path
+        android:pathData="M41,45 L47.6,54.5 L54,44 L60.4,54.5 L67,45 L66.2,64 L41.8,64 Z"
+        android:fillColor="#FFFFFF" />
+
+    <path
+        android:pathData="M41,44.4 a2.7,2.7 0 1,0 0.01,0 z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M54,43 a2.7,2.7 0 1,0 0.01,0 z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M67,44.4 a2.7,2.7 0 1,0 0.01,0 z"
+        android:fillColor="#FFFFFF" />
+</vector>
