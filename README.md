@@ -60,9 +60,15 @@ Kotlin + Jetpack Compose + Material 3 Expressive 重写的物理象棋小游戏�
 # debug
 ./gradlew :app:assembleDebug
 
-# release（需要自备签名，见 app/build.gradle.kts 的 signingConfigs）
+# release（可选：设置自己的签名材料；不设置则沿用 Gradle 默认行为）
+export CRAZYCHESS_KEYSTORE=/absolute/path/to/your.keystore
+export CRAZYCHESS_KEYSTORE_PASSWORD=yourpass      # 默认 crazychess
+export CRAZYCHESS_KEY_ALIAS=youralias             # 默认 crazychess
 ./gradlew :app:assembleRelease
 ```
+
+> 签名材料不进仓库：`app/build.gradle.kts` 从上面这三个环境变量读取，
+> debug 与 release 会共用同一把证书，方便 `adb install -r` 在两种构建间来回覆盖。
 
 安装到设备：
 

@@ -68,7 +68,7 @@ $env:ANDROID_HOME="C:\Users\Lenovo\AppData\Local\Android\Sdk"
 - `libs.versions.toml` 与所有 xml 必须 **UTF-8 无 BOM**（PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会写 BOM，Gradle 会报 `Unexpected '\ufeff'`）。
 - 必须加 `--no-watch-fs`，否则沙箱下文件监视器报 `Couldn't open current thread, error = 5`。
 - `gradle.properties` 必须有 `kotlin.compiler.execution.strategy=in-process`，否则 Kotlin 守护进程写 `C:\Users\Lenovo\AppData\Local\kotlin\daemon` 被拒（`AccessDeniedException` / `Could not connect to Kotlin compile daemon`）。
-- 签名：debug 与 release **共用** `D:\whaletest\work\release.keystore`（storepass / keypass / alias 均为 `crazychess`），否则 `adb install -r` 会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
+- 签名：debug 与 release **共用**同一把自签证书，否则 `adb install -r` 会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。证书路径不写进仓库，改用环境变量：`CRAZYCHESS_KEYSTORE`（配合 `CRAZYCHESS_KEYSTORE_PASSWORD` / `CRAZYCHESS_KEY_ALIAS`，默认均为 `crazychess`）；不设时 `app/build.gradle.kts` 退回 Gradle 默认签名行为。
 - 截图用 `android_screenshot` 工具；`adb exec-out screencap -p > file` 在 PowerShell 下会损坏 PNG（抓动画帧用 `adb shell screencap -p /sdcard/x.png` + `adb pull`）。
 - Gradle wrapper 的 `gradle-8.9-bin.zip` 是本机打包的（必须包含目录条目，否则解压报 `LICENSE` 找不到）。
 

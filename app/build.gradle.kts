@@ -32,29 +32,29 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // The sandbox forbids writing to C:\Users\<user>\.android, so the default
-    // debug keystore location is unusable here. Both variants are signed with
-    // the same workspace keystore so `adb install -r` can hop between a debug
-    // and a release build without uninstalling first.
+    // 签名材料不写进仓库。设置了 CRAZYCHESS_KEYSTORE 时，debug 与 release 共用同一把
+    // 自签证书（这样 `adb install -r` 可以在两种构建之间来回覆盖）；没设置就退回
+    // Gradle 默认行为（debug 用 ~/.android/debug.keystore，release 不签名）。
+    val keystorePath: String? = System.getenv("CRAZYCHESS_KEYSTORE")
+    val keystoreFile = keystorePath?.let { file(it) }
+    val hasKeystore = keystoreFile != null && keystoreFile.exists()
+    val storePass = System.getenv("CRAZYCHESS_KEYSTORE_PASSWORD") ?: "crazychess"
+    val keyAliasName = System.getenv("CRAZYCHESS_KEY_ALIAS") ?: "crazychess"
+
     signingConfigs {
-        create("workspaceDebug") {
-            storeFile = file("D:/whaletest/work/release.keystore")
-            storePassword = "crazychess"
-            keyAlias = "crazychess"
-            keyPassword = "crazychess"
-        }
-        // release 包也放在工作区里，避免碰 C:\Users\<user>\.android
-        create("release") {
-            storeFile = file("D:/whaletest/work/release.keystore")
-            storePassword = "crazychess"
-            keyAlias = "crazychess"
-            keyPassword = "crazychess"
+        if (hasKeystore) {
+            create("shared") {
+                storeFile = keystoreFile
+                storePassword = storePass
+                keyAlias = keyAliasName
+                keyPassword = System.getenv("CRAZYCHESS_KEY_PASSWORD") ?: storePass
+            }
         }
     }
 
     buildTypes {
         getByName("debug") {
-            signingConfig = signingConfigs.getByName("workspaceDebug")
+            if (hasKeystore) signingConfig = signingConfigs.getByName("shared")
         }
         getByName("release") {
             isMinifyEnabled = true
@@ -63,7 +63,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = signingConfigs.getByName("release")
+            if (hasKeystore) signingConfig = signingConfigs.getByName("shared")
         }
     }
 }
