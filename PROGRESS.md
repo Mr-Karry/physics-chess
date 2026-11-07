@@ -150,7 +150,21 @@ app/src/main/java/dev/whale/crazychess/
 
 ---
 
-## 六、仓库与自动构建
+## 六、v1.1 局域网对战
+
+- 新增 `net/LanSession.kt`：`ServerSocket` 房主 + `Socket` 客人，端口 `47800`，一行一条 JSON
+  （`hello` / `shot` / `state` / `resign` / `rematch` / `bye`）；事件用 `Channel` + `receiveAsFlow`，订阅前到达的消息不丢。
+- 引擎补 `exportState()` / `applyState()` / `forceEnd()`：状态是一行管道分隔文本，
+  `1|比分1|比分2|轮到谁|是否结束|赢家|32 个 x,y,阻尼 槽位`（`-` 表示已出局），槽位下标即棋子 id。
+- 同步策略「谁出手谁权威」：出手方停稳后广播快照，对端 `applyState` 覆盖；收到对手 `shot` 时先本地推演做动画，
+  在快照到达前锁输入（6 秒兜底解锁）。
+- 首页第三张卡「局域网对战」+ `LanPanel`（显示本机 IP、创建房间、填地址加入）；连上即自动开局。
+- 暂停菜单在联机下多一个「认输」；对手掉线弹「对手已离开」，此时结果卡只留「返回菜单」。
+- 清单补 `INTERNET`、`ACCESS_NETWORK_STATE`；版本 `versionCode 6` / `versionName 1.1`。
+- 验证：模拟器 + Node 假对端（`adb forward tcp:47800 tcp:47800`）跑通握手、出手广播、快照对齐、
+  远端认输、本方认输、掉线提示。
+
+## 七、仓库与自动构建
 
 | 项 | 值 |
 | --- | --- |
@@ -165,7 +179,25 @@ app/src/main/java/dev/whale/crazychess/
 
 ---
 
-## 七、待办 / 可选打磨
+## 八、v1.2 昵称 / 镜像视角 / 沉浸式
+
+- **昵称**：首页联机面板加输入框（`take(10)` 截断，label 里带 `n/10` 计数）。房主把昵称写进 `hello` 的 `name` 字段，客人从房主 hello 里读回来；双方昵称在计分卡上显示（`myName` / `peerName`），不再用「下方 / 上方」。
+- **客户端镜像**：`BoardView` 新增 `flipped`，`toPx(x, y, flip)` 把坐标翻成 `BOARD - x / BOARD - y`，**只翻坐标不翻画布**，所以棋子字形永远正立；命中判定与拖拽向量同样先翻转再喂给引擎。客人（`mySide == TOP`）自动开启。
+- **沉浸式**：`Surface` 不再加 `statusBarsPadding()/navigationBarsPadding()`，背景铺满整屏；内边距下放到 `HomeScreen` 根 `Box` 与 `GameScreen` 的 `BoxWithConstraints`。
+- **面板排版**：选中「局域网对战」时收起首页那段通用玩法说明（省约 130dp），底部提示压成一行，面板内边距 18→14dp，一屏内能看到昵称 / 创建房间 / 地址 / 加入房间。曾尝试用 `onGloballyPositioned + animateScrollTo` 自动把面板滚进视野，因测量时机（首帧 `positionInParent()` 为 0）没能稳定工作，已删除。
+- 版本：`versionCode = 7` / `versionName = "1.2"`。
+
+---
+
+## 九、v1.3 视角与操作打磨
+
+- **镜像视角**：客人执上方时棋盘按客人方向镜像（`BoardView(flipped = ...)`，只翻坐标不翻画布，字形保持正立），不再需要倒着拿手机。
+- **昵称**：建房 / 加入前可填昵称（上限 10 字，`n/10` 计数），名字进 `hello` 包随协议传输；计分卡显示双方昵称（昵称跟人走、卡片跟边走的 `bottomName/topName` 映射）。
+- **获胜印章不再倒置**：`WinStamp` 增 `rotateForTop` 参数，联机（`lan != null`）传 `false` —— 同屏双人保留"顶方印章转 180°"的旧语义，联机时无论哪边赢都正立。
+- **可取消**：`hostAndWait` 用 `ServerSocket.soTimeout = 400` + `ensureActive()` 轮询，取消能立刻退出 `accept()` 阻塞；`lanJob` 记录协程，`catch (e: CancellationException) { throw e }` 避免被当成失败；面板在 Hosting / Joining 时分别给「取消等待」「取消连接」。
+- **联机面板一屏放下**：选中联机时收起首页通用操作说明（省约 130dp）、说明压成一行、内边距 18→14dp、昵称计数并进 label。自动滚动方案（`onGloballyPositioned` + `animateScrollTo`）试过三种 key 都无效，已放弃。
+
+## 十、待办 / 可选打磨
 
 1. **棋子贴图**：现用 ♟♜♞♝♛♚ 字形绘制，可换成矢量棋子或原版 army1 / army2 风格资源。
 2. **AI 强度曲线**：三档差异目前只在精度与力度（约 36% / 44% / 54% 的每手吃子率），可再加"轻松不打王""凶狠预演候选线路"。

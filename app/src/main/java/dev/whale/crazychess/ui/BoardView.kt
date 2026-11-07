@@ -59,11 +59,18 @@ private fun DrawScope.cellSize(): Float = (size.width - size.width * PAD * 2f) /
 
 private fun DrawScope.boardPad(): Float = size.width * PAD
 
-/** 把物理坐标（格）换算成画布坐标。 */
-private fun DrawScope.toPx(x: Float, y: Float): Offset {
+/**
+ * 把物理坐标（格）换算成画布坐标。
+ *
+ * [flip] 用于局域网里执上方的一方：整盘 180° 镜像，让他自己的子出现在屏幕下方，
+ * 不用把手机倒过来拿。只翻坐标不翻画布，棋子字形始终是正的。
+ */
+private fun DrawScope.toPx(x: Float, y: Float, flip: Boolean = false): Offset {
     val pad = boardPad()
     val cell = cellSize()
-    return Offset(pad + x * cell, pad + y * cell)
+    val bx = if (flip) Rules.BOARD - x else x
+    val by = if (flip) Rules.BOARD - y else y
+    return Offset(pad + bx * cell, pad + by * cell)
 }
 
 /**
@@ -72,7 +79,10 @@ private fun DrawScope.toPx(x: Float, y: Float): Offset {
  * 尺寸完全由外部传入的 [modifier] 决定（竖屏用 fillMaxWidth，横屏用 fillMaxHeight），
  * 内部不再写死宽高比，这样平板横屏也不会撑出屏幕。
  *
- * @param controlSide 当前这台设备可以操作的阵营；人机模式下是下方，双人模式下随回合切换。
+ * @param controlSide 当前这台设备可以操作的阵营；人机模式下是下方，双人模式下随回合切换，
+ *   局域网里固定是自己那一方。
+ * @param inputEnabled 局域网同步未对齐时先关掉输入，避免两边各算一套物理。
+ * @param onShot 出手成功时回调（带上棋子和拖拽向量），局域网靠它把这一手发给对端。
  */
 @Composable
 fun BoardView(
@@ -82,7 +92,9 @@ fun BoardView(
     frameTick: Long,
     panFraction: Float,
     modifier: Modifier = Modifier,
-    onShot: () -> Unit,
+    inputEnabled: Boolean = true,
+    flipped: Boolean = false,
+    onShot: (Piece, Float, Float) -> Unit,
     onSelect: () -> Unit,
     onInvalid: () -> Unit,
 ) {
@@ -114,14 +126,23 @@ fun BoardView(
     Canvas(
         modifier = modifier
             .clip(RoundedCornerShape(28.dp))
-            .pointerInput(engine, controlSide) {
+            .pointerInput(engine, controlSide, inputEnabled, flipped) {
                 detectDragGestures(
                     onDragStart = { pos ->
+                        if (!inputEnabled) {
+                            dragging = null
+                            onInvalid()
+                            return@detectDragGestures
+                        }
                         val cell = (size.width - size.width * PAD * 2f) / Rules.BOARD
                         val pad = size.width * PAD
                         val panPx = size.width * pan.value
-                        val bx = (pos.x - panPx - pad) / cell
-                        val by = (pos.y - pad) / cell
+                        var bx = (pos.x - panPx - pad) / cell
+                        var by = (pos.y - pad) / cell
+                        if (flipped) {
+                            bx = Rules.BOARD - bx
+                            by = Rules.BOARD - by
+                        }
                         val hit = engine.hitTest(bx, by)
                         if (hit == null) {
                             dragging = null
@@ -143,7 +164,13 @@ fun BoardView(
                         val cell = (size.width - size.width * PAD * 2f) / Rules.BOARD
                         val pad = size.width * PAD
                         val panPx = size.width * pan.value
-                        dragPos = Offset((change.position.x - panPx - pad) / cell, (change.position.y - pad) / cell)
+                        var mx = (change.position.x - panPx - pad) / cell
+                        var my = (change.position.y - pad) / cell
+                        if (flipped) {
+                            mx = Rules.BOARD - mx
+                            my = Rules.BOARD - my
+                        }
+                        dragPos = Offset(mx, my)
                     },
                     onDragEnd = {
                         val piece = dragging
@@ -154,7 +181,7 @@ fun BoardView(
                             val len = hypot(dx, dy).coerceAtMost(Rules.MAX_DRAG)
                             if (len >= Rules.MIN_DRAG && engine.shoot(piece, dx, dy)) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onShot()
+                                onShot(piece, dx, dy)
                             } else {
                                 onInvalid()
                             }
@@ -172,7 +199,7 @@ fun BoardView(
 
         for (p in engine.pieces) {
             if (!p.alive) continue
-            drawPiece(p, colors, textMeasurer, density.density, selected = p === dragging, pulse = pulse)
+            drawPiece(p, colors, textMeasurer, density.density, selected = p === dragging, pulse = pulse, flip = flipped)
         }
 
         // 时间基准与 GameEngine.tick 传入的 nowMs 一致
@@ -185,6 +212,7 @@ fun BoardView(
             val center = toPx(
                 fx.fromX + fx.vx * 0.16f * progress,
                 fx.fromY + fx.vy * 0.16f * progress,
+                flip = flipped,
             )
             drawPieceAt(
                 center = center,
@@ -205,7 +233,7 @@ fun BoardView(
             val age = (now - fx.startTimeMs) / 700f
             if (age in 0f..1f) {
                 val c = colors.of(fx.colorSide).first
-                val center = toPx(fx.x, fx.y)
+                val center = toPx(fx.x, fx.y, flip = flipped)
                 val r = (0.2f + age * 1.2f) * cellSize()
                 drawCircle(
                     color = c.copy(alpha = (1f - age) * 0.45f),
@@ -219,7 +247,11 @@ fun BoardView(
         // 瞄准线
         val piece = dragging
         if (piece != null) {
-            drawAim(toPx(piece.x, piece.y), toPx(dragPos.x, dragPos.y), colors)
+            drawAim(
+                toPx(piece.x, piece.y, flip = flipped),
+                toPx(dragPos.x, dragPos.y, flip = flipped),
+                colors,
+            )
         }
         // 让编译器不要把 t 优化掉
         if (t < 0) drawLine(Color.Transparent, Offset.Zero, Offset.Zero)
@@ -284,10 +316,11 @@ private fun DrawScope.drawPiece(
     density: Float,
     selected: Boolean,
     pulse: Float,
+    flip: Boolean = false,
 ) {
     val cell = cellSize()
     drawPieceAt(
-        center = toPx(piece.x, piece.y),
+        center = toPx(piece.x, piece.y, flip = flip),
         radius = piece.radius * cell,
         type = piece.type,
         side = piece.side,

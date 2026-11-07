@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -39,6 +41,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,10 +64,13 @@ import dev.whale.crazychess.SoundFx
 import dev.whale.crazychess.game.Difficulty
 import dev.whale.crazychess.game.GameEngine
 import dev.whale.crazychess.game.GameMode
+import dev.whale.crazychess.game.Piece
 import dev.whale.crazychess.game.PieceType
 import dev.whale.crazychess.game.Rules
 import dev.whale.crazychess.game.Side
 import dev.whale.crazychess.game.WinCondition
+import dev.whale.crazychess.net.LanEvent
+import dev.whale.crazychess.net.LanSession
 import dev.whale.crazychess.ui.PiecePaint
 import kotlinx.coroutines.delay
 /** 棋盘最多左右各平移 3.5 格（占棋盘宽度的比例），再往两边就没意义了。 */
@@ -106,6 +112,10 @@ fun GameScreen(
     winCondition: WinCondition,
     engineSeed: Int,
     bottomMovesFirst: Boolean = true,
+    lan: LanSession? = null,
+    mySide: Side = Side.BOTTOM,
+    myName: String = "你",
+    peerName: String = "对手",
     onExit: () -> Unit,
 ) {
     // 底方执「先手色」还是「后手色」：颜色整套对调，先手方永远是先手色那一方
@@ -132,6 +142,15 @@ fun GameScreen(
 
     var hint by remember { mutableStateOf<String?>(null) }
     var hintId by remember { mutableLongStateOf(0L) }
+
+    // ---------------- 局域网 ----------------
+    // 对手那一手我先本地推演一遍用于动画，但真正的结果以他后来那条 state 为准，
+    // 在这之前先锁住输入，避免两边各算一套物理越走越远。
+    var awaitingSync by remember { mutableStateOf(false) }
+    var peerGone by remember { mutableStateOf<String?>(null) }
+    var peerLabel by remember(lan) { mutableStateOf(peerName.ifBlank { "对手" }) }
+    var myShotSeq by remember { mutableIntStateOf(0) }
+    var sentSeq by remember { mutableIntStateOf(0) }
 
     // 棋盘横向平移：以棋盘宽度的比例表示，-PAN_LIMIT..PAN_LIMIT。
     // 由棋盘上/下方的拖动条驱动；人机模式下轮到 AI 时自动回中。
@@ -187,6 +206,12 @@ fun GameScreen(
                     SoundFx.decide()
                 }
 
+                // 局域网：我出手之后，等棋盘停稳就把权威局面发给对端（谁出手谁权威）
+                if (lan != null && myShotSeq > sentSeq && (engine.isSettled() || engine.isOver)) {
+                    lan.sendState(engine.exportState())
+                    sentSeq = myShotSeq
+                }
+
                 snapshotState.value = engine.snapshot()
             }
         }
@@ -215,7 +240,64 @@ fun GameScreen(
         }
     }
 
-    val controlSide = if (mode == GameMode.VS_ANDROID) Side.BOTTOM else engine.activeSide
+    // 局域网事件：对手出手 / 对手同步局面 / 认输 / 掉线
+    LaunchedEffect(lan) {
+        val session = lan ?: return@LaunchedEffect
+        session.events.collect { ev ->
+            when (ev) {
+                is LanEvent.RemoteShot -> {
+                    val piece = engine.pieces.firstOrNull { it.id == ev.pieceId }
+                    if (piece != null) {
+                        // 先在本地推演一遍，动画才不会是"瞬移"；正解随后那条 state 再覆盖
+                        awaitingSync = true
+                        engine.shoot(piece, ev.dx, ev.dy)
+                    }
+                }
+
+                is LanEvent.RemoteState -> {
+                    engine.applyState(ev.state)
+                    awaitingSync = false
+                }
+
+                LanEvent.RemoteResigned -> engine.forceEnd(mySide, "对手认输了")
+
+                LanEvent.RemoteRematch -> {
+                    engine.reset()
+                    showResult = false
+                    showResultDialog = false
+                    awaitingSync = false
+                    myShotSeq = 0
+                    sentSeq = 0
+                }
+
+                is LanEvent.PeerLeft -> peerGone = ev.reason
+
+                is LanEvent.PeerJoined -> peerLabel = ev.name
+            }
+        }
+    }
+
+    // 兜底：对端那条 state 万一没来（丢包 / 掉线），别把输入锁死
+    LaunchedEffect(awaitingSync) {
+        if (awaitingSync) {
+            delay(6000)
+            awaitingSync = false
+        }
+    }
+
+    val controlSide = when {
+        lan != null -> mySide
+        mode == GameMode.VS_ANDROID -> Side.BOTTOM
+        else -> engine.activeSide
+    }
+
+    // 局域网：本地出手后立刻把手发给对端，停稳后再补一条权威局面
+    val onLocalShot: (Piece, Float, Float) -> Unit = { piece, dx, dy ->
+        if (lan != null) {
+            myShotSeq++
+            lan.sendShot(piece.id, dx, dy)
+        }
+    }
 
     val invalidHint: () -> Unit = {
         hint = when {
@@ -231,12 +313,22 @@ fun GameScreen(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .statusBarsPadding()
+                .navigationBarsPadding(),
         ) {
             // 在这个组合作用域里读取状态，保证物理每推进一帧都会刷新整套界面
             val s = snapshotState.value
             val turnText = when {
-                s.over -> if (s.draw) "平局" else "${s.winner?.label}获胜"
+                s.over -> when {
+                    s.draw -> "平局"
+                    lan != null -> if (s.winner == mySide) "你赢了" else "对手获胜"
+                    else -> "${s.winner?.label}获胜"
+                }
+
+                lan != null && awaitingSync -> "同步中…"
+                lan != null && s.active != mySide -> "等对手出手…"
+                lan != null -> "轮到你出手"
                 mode == GameMode.VS_ANDROID && s.active == Side.TOP -> "对手正在瞄准…"
                 mode == GameMode.VS_ANDROID -> "轮到你出手"
                 else -> "轮到${s.active.label}出手"
@@ -287,9 +379,12 @@ fun GameScreen(
                                     modifier = Modifier
                                         .size(side)
                                         .onSizeChanged { boardWidthPx = it.width.toFloat() },
-                                    onShot = {},
+                                    onShot = onLocalShot,
                                     onSelect = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) },
                                     onInvalid = invalidHint,
+                                    inputEnabled = !awaitingSync,
+                                    // 联机里执上方的人：棋盘 180° 镜像，自己的子落在屏幕下方
+                                    flipped = lan != null && mySide == Side.TOP,
                                 )
                             }
                             Spacer(Modifier.height(8.dp))
@@ -326,6 +421,9 @@ fun GameScreen(
                                 colors = colors,
                                 onPause = { showPause = true },
                                 stacked = true,
+                                myName = myName,
+                                peerName = peerLabel,
+                                mySide = mySide,
                             )
                             Spacer(Modifier.height(14.dp))
                             TurnBanner(turnText, s, colors)
@@ -352,6 +450,9 @@ fun GameScreen(
                             colors = colors,
                             onPause = { showPause = true },
                             stacked = false,
+                            myName = myName,
+                            peerName = peerLabel,
+                            mySide = mySide,
                         )
                     }
                     Spacer(Modifier.weight(if (mode == GameMode.VS_HUMAN) 1f else 0.45f))
@@ -375,9 +476,11 @@ fun GameScreen(
                             .widthIn(max = 560.dp)
                             .aspectRatio(1f)
                             .onSizeChanged { boardWidthPx = it.width.toFloat() },
-                        onShot = {},
+                        onShot = onLocalShot,
                         onSelect = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) },
                         onInvalid = invalidHint,
+                        inputEnabled = !awaitingSync,
+                        flipped = lan != null && mySide == Side.TOP,
                     )
                     Spacer(Modifier.height(8.dp))
                     PanBar(panFraction, colors.paintA) { dx ->
@@ -407,11 +510,16 @@ fun GameScreen(
 
             // 原版终局画面：屏幕正中出现胜利一方配色的大拇指，并且朝向胜利者
             // （顶方获胜时旋转 180°，坐在对面的人看到的是正的）。
+            // 联机时每人一块屏，镜像后自己的半区总在下方，所以"我的下方"是 mySide。
+            val myBottom = if (lan != null) mySide else Side.BOTTOM
             val winSide = s.winner
             if (showResult && !s.draw && winSide != null) {
                 WinStamp(
                     side = winSide,
                     colors = colors,
+                    // 印章朝向胜利方：赢家在我这块屏的上半区就转 180°，
+                    // 这样它永远是"朝赢家那一侧"的（联机镜像后自己的半区总在下方）
+                    facingAway = winSide != myBottom,
                     modifier = Modifier.align(Alignment.Center),
                 )
             }
@@ -423,11 +531,23 @@ fun GameScreen(
             onDismissRequest = { showPause = false },
             title = { Text("暂停") },
             text = {
-                Text(
-                    "本局比分  ${engine.scoreP1} : ${engine.scoreP2}\n" +
-                        "胜利条件  ${winCondition.label}\n" +
-                        "已出局  ${32 - engine.totalAlive(Side.BOTTOM) - engine.totalAlive(Side.TOP)} 子",
-                )
+                Column {
+                    Text(
+                        "本局比分  ${engine.scoreP1} : ${engine.scoreP2}\n" +
+                            "胜利条件  ${winCondition.label}\n" +
+                            "已出局  ${32 - engine.totalAlive(Side.BOTTOM) - engine.totalAlive(Side.TOP)} 子",
+                    )
+                    if (lan != null) {
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(
+                            onClick = {
+                                showPause = false
+                                lan.sendResign()
+                                engine.forceEnd(mySide.other, "你认输了")
+                            },
+                        ) { Text("认输", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
             },
             confirmButton = {
                 Button(onClick = { showPause = false }) { Text("继续") }
@@ -441,12 +561,33 @@ fun GameScreen(
     if (showResultDialog) {
         ResultDialog(
             engine = engine,
+            mySide = mySide,
+            lan = lan != null,
+            peerGone = peerGone != null,
             onReplay = {
+                if (lan != null) {
+                    // 联机时「再来一局」要通知对端一起重开
+                    lan.sendRematch()
+                    myShotSeq = 0
+                    sentSeq = 0
+                    awaitingSync = false
+                }
                 engine.reset()
                 showResult = false
                 showResultDialog = false
             },
             onExit = onExit,
+        )
+    }
+
+    // 对手掉线：给一个明确出口，别让人对着停住的棋盘发呆
+    val gone = peerGone
+    if (gone != null && !showResultDialog) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("对手已离开") },
+            text = { Text("$gone\n这局到此为止。") },
+            confirmButton = { Button(onClick = onExit) { Text("返回菜单") } },
         )
     }
 }
@@ -459,6 +600,7 @@ fun GameScreen(
 private fun WinStamp(
     side: Side,
     colors: BoardColors,
+    facingAway: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val paint = colors.paint(side)
@@ -468,7 +610,7 @@ private fun WinStamp(
     }
     Box(
         modifier = modifier
-            .rotate(if (side == Side.TOP) 180f else 0f)
+            .rotate(if (facingAway) 180f else 0f)
             .graphicsLayer {
                 scaleX = pop.value
                 scaleY = pop.value
@@ -644,10 +786,21 @@ private fun ScoreHeader(
     colors: BoardColors,
     onPause: () -> Unit,
     stacked: Boolean,
+    myName: String = "你",
+    peerName: String = "对手",
+    mySide: Side = Side.BOTTOM,
 ) {
+    // 联机时显示双方昵称；昵称跟着"人"走，卡片跟着"边"走，所以按 mySide 换一下
+    val bottomName = if (mySide == Side.BOTTOM) myName else peerName
+    val topName = if (mySide == Side.BOTTOM) peerName else myName
+    val names = if (mode == GameMode.LAN) bottomName to topName else null
     val bottom = @Composable { modifier: Modifier ->
         ScoreCard(
-            label = if (mode == GameMode.VS_ANDROID) "你" else "下方",
+            label = names?.first ?: when (mode) {
+                GameMode.VS_ANDROID -> "你"
+                GameMode.LAN -> "你"
+                else -> "下方"
+            },
             score = snap.scoreBottom,
             alive = snap.aliveBottom,
             accent = colors.sideA,
@@ -659,7 +812,11 @@ private fun ScoreHeader(
     }
     val top = @Composable { modifier: Modifier ->
         ScoreCard(
-            label = if (mode == GameMode.VS_ANDROID) "AI" else "上方",
+            label = names?.second ?: when (mode) {
+                GameMode.VS_ANDROID -> "AI"
+                GameMode.LAN -> "对手"
+                else -> "上方"
+            },
             score = snap.scoreTop,
             alive = snap.aliveTop,
             accent = colors.sideB,
@@ -800,12 +957,26 @@ private fun TurnBanner(text: String, snap: Snapshot, colors: BoardColors) {
 }
 
 @Composable
-private fun ResultDialog(engine: GameEngine, onReplay: () -> Unit, onExit: () -> Unit) {
+private fun ResultDialog(
+    engine: GameEngine,
+    mySide: Side = Side.BOTTOM,
+    lan: Boolean = false,
+    peerGone: Boolean = false,
+    onReplay: () -> Unit,
+    onExit: () -> Unit,
+) {
     val title = when {
         engine.isDraw -> "同归于尽"
+        lan -> if (engine.winner == mySide) "你赢了" else "对手获胜"
         engine.winner == Side.TOP && engine.mode == GameMode.VS_ANDROID -> "AI 获胜"
         engine.winner == Side.BOTTOM -> if (engine.mode == GameMode.VS_ANDROID) "你赢了" else "下方获胜"
         else -> "上方获胜"
+    }
+    // 认输这类非物理结局会覆盖 status，优先把它显示出来
+    val endReason = engine.status.let { st ->
+        if (st.contains("认输") || st.contains("离开")) st
+        else if (engine.winCondition == WinCondition.KILL_KING) "擒王模式：王被撞出棋盘即落败"
+        else "全歼模式：吃光对方所有棋子"
     }
     AlertDialog(
         onDismissRequest = {},
@@ -815,16 +986,17 @@ private fun ResultDialog(engine: GameEngine, onReplay: () -> Unit, onExit: () ->
                 Text("比分  ${engine.scoreP1} : ${engine.scoreP2}")
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (engine.winCondition == WinCondition.KILL_KING) {
-                        "擒王模式：王被撞出棋盘即落败"
-                    } else {
-                        "全歼模式：吃光对方所有棋子"
-                    },
+                    endReason,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
         },
-        confirmButton = { Button(onClick = onReplay) { Text("再来一局") } },
+        // 对手已经掉线就没法再来一局了，只留返回
+        confirmButton = {
+            if (!peerGone) {
+                Button(onClick = onReplay) { Text("再来一局") }
+            }
+        },
         dismissButton = { TextButton(onClick = onExit) { Text("返回菜单") } },
     )
 }

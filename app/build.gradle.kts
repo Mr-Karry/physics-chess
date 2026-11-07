@@ -13,8 +13,8 @@ android {
         applicationId = "dev.whale.crazychess"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 8
+        versionName = "1.3"
     }
 
     // Both halves of a Compose build must agree on the bytecode target. Without

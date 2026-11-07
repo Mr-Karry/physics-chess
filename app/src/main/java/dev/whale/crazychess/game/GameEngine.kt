@@ -2,6 +2,7 @@ package dev.whale.crazychess.game
 
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
@@ -89,6 +90,7 @@ enum class WinCondition(val label: String) {
 enum class GameMode(val label: String) {
     VS_ANDROID("人机对战"),
     VS_HUMAN("双人对战"),
+    LAN("局域网对战"),
 }
 
 enum class Difficulty(val label: String, val aimNoiseDeg: Float, val power: Float) {
@@ -440,6 +442,119 @@ class GameEngine(
         winner = null
         isDraw = true
         status = "平局"
+    }
+
+    // ---------------------------------------------------------------- 局域网同步
+
+    /**
+     * 把局面压成一行字符串，局域网对端拿它对齐。
+     *
+     * 结构：`1|scoreP1|scoreP2|谁该走|是否结束|赢家|32 个槽位`，
+     * 槽位是 `x,y,阻尼`（都乘 100 取整）或 `-` 表示已出局。
+     * 棋子顺序是固定的（先底方 16 枚、再顶方 16 枚），所以槽位下标就是棋子 id。
+     */
+    fun exportState(): String {
+        val sb = StringBuilder(560)
+        sb.append("1|").append(scoreP1).append('|').append(scoreP2).append('|')
+            .append(if (activeSide == Side.BOTTOM) "b" else "t").append('|')
+            .append(if (isOver) '1' else '0').append('|')
+            .append(
+                when {
+                    isOver && isDraw -> "d"
+                    winner == Side.BOTTOM -> "b"
+                    winner == Side.TOP -> "t"
+                    else -> "-"
+                },
+            )
+        for (p in pieces) {
+            sb.append('|')
+            if (!p.alive) {
+                sb.append('-')
+            } else {
+                sb.append((p.x * 100).roundToInt()).append(',')
+                    .append((p.y * 100).roundToInt()).append(',')
+                    .append((p.damping * 100).roundToInt())
+            }
+        }
+        return sb.toString()
+    }
+
+    /** 用对端发来的局面覆盖本地局面；格式不对就原样返回 false，本地不动。 */
+    fun applyState(state: String): Boolean {
+        val parts = state.split('|')
+        if (parts.size != 6 + pieces.size || parts.first() != "1") return false
+        val p1 = parts[1].toIntOrNull() ?: return false
+        val p2 = parts[2].toIntOrNull() ?: return false
+        val next = when (parts[3]) {
+            "b" -> Side.BOTTOM
+            "t" -> Side.TOP
+            else -> return false
+        }
+        val over = parts[4] == "1"
+        val win = when (parts[5]) {
+            "b" -> Side.BOTTOM
+            "t" -> Side.TOP
+            "d" -> null
+            else -> null
+        }
+        val parsed = arrayOfNulls<FloatArray>(pieces.size)
+        for (i in pieces.indices) {
+            val tok = parts[6 + i]
+            if (tok == "-") {
+                parsed[i] = null
+                continue
+            }
+            val f = tok.split(',')
+            if (f.size != 3) return false
+            val x = f[0].toIntOrNull() ?: return false
+            val y = f[1].toIntOrNull() ?: return false
+            val d = f[2].toIntOrNull() ?: return false
+            parsed[i] = floatArrayOf(x / 100f, y / 100f, d / 100f)
+        }
+
+        scoreP1 = p1
+        scoreP2 = p2
+        activeSide = next
+        isOver = over
+        winner = win
+        isDraw = over && parts[5] == "d"
+        for (i in pieces.indices) {
+            val p = pieces[i]
+            val st = parsed[i]
+            if (st == null) {
+                p.alive = false
+                p.vx = 0f
+                p.vy = 0f
+            } else {
+                p.alive = true
+                p.x = st[0]
+                p.y = st[1]
+                p.damping = st[2]
+                p.vx = 0f
+                p.vy = 0f
+            }
+        }
+        status = if (isOver) {
+            when {
+                isDraw -> "平局"
+                winner != null -> "${winner!!.label}获胜"
+                else -> "本局结束"
+            }
+        } else {
+            "轮到${activeSide.label}出手"
+        }
+        return true
+    }
+
+    /** 局域网里对手认输 / 掉线时，直接把局面收尾。 */
+    fun forceEnd(w: Side?, reason: String? = null) {
+        if (isOver) return
+        if (w == null) {
+            finishDraw()
+        } else {
+            finish(w)
+        }
+        if (reason != null) status = reason
     }
 
     // ---------------------------------------------------------------- AI
