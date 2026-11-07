@@ -1,4 +1,4 @@
-﻿# Physics Chess（弹棋）—— 开发进度存档
+# Physics Chess（弹棋）—— 开发进度存档
 
 > 复刻自 `CrazyChess v1.3.2.apk`（AndEngine + Box2D 物理象棋）。
 > 原版的逆向分析笔记没有入库（当时是同一次会话里另存的 Markdown）。
@@ -170,12 +170,13 @@ app/src/main/java/dev/whale/crazychess/
 | --- | --- |
 | 远程仓库 | https://github.com/Mr-Karry/physics-chess （private） |
 | 主分支 | `main` |
-| Release | `v1.0` → `PhysicsChess-1.0.apk` |
+| Release | `v1.0` → `PhysicsChess-1.0.apk`；`v1.3` → `PhysicsChess-1.3.apk`（1.0 之后第一个正式版） |
 | CI | `.github/workflows/release.yml`（workflow：Android Release） |
 
 - 推 `v*` 标签或手动 `Run workflow` 即触发：构建 release APK → 校验签名 → 上传 Actions 产物 → 挂到对应 Release。
 - 签名材料走 Secrets（`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`）；未配置时只出未签名产物、不发布。
 - 已用标签 `v0.0.1-ci` 跑通一次：构建、重命名、上传产物全部成功，签名校验与发布按设计跳过（事后已删除该测试标签）。
+- `v1.3` 的 Release 由本地手动创建并上传 APK（`https://github.com/Mr-Karry/physics-chess/releases/tag/v1.3`）；推 tag 同时触发了一次 CI 构建，因未配 Secrets 只产出未签名产物。
 
 ---
 
@@ -193,7 +194,7 @@ app/src/main/java/dev/whale/crazychess/
 
 - **镜像视角**：客人执上方时棋盘按客人方向镜像（`BoardView(flipped = ...)`，只翻坐标不翻画布，字形保持正立），不再需要倒着拿手机。
 - **昵称**：建房 / 加入前可填昵称（上限 10 字，`n/10` 计数），名字进 `hello` 包随协议传输；计分卡显示双方昵称（昵称跟人走、卡片跟边走的 `bottomName/topName` 映射）。
-- **获胜印章不再倒置**：`WinStamp` 增 `rotateForTop` 参数，联机（`lan != null`）传 `false` —— 同屏双人保留"顶方印章转 180°"的旧语义，联机时无论哪边赢都正立。
+- **印章朝向胜利方**：`WinStamp(side, colors, facingAway)`，调用点算 `val myBottom = if (lan != null) mySide else Side.BOTTOM`、`facingAway = winSide != myBottom` —— 每块屏上自己的半区永远在下方，赢家在对侧就把印章转 180°，所以印章始终朝赢家那一侧；人机/同屏双人里 `myBottom = BOTTOM`，与原来"顶方获胜转 180°"等价。（中途曾误改成"联机永远正立"，已按用户反馈纠正。）
 - **可取消**：`hostAndWait` 用 `ServerSocket.soTimeout = 400` + `ensureActive()` 轮询，取消能立刻退出 `accept()` 阻塞；`lanJob` 记录协程，`catch (e: CancellationException) { throw e }` 避免被当成失败；面板在 Hosting / Joining 时分别给「取消等待」「取消连接」。
 - **联机面板一屏放下**：选中联机时收起首页通用操作说明（省约 130dp）、说明压成一行、内边距 18→14dp、昵称计数并进 label。自动滚动方案（`onGloballyPositioned` + `animateScrollTo`）试过三种 key 都无效，已放弃。
 
