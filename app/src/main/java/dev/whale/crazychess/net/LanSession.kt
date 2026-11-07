@@ -1,6 +1,5 @@
 package dev.whale.crazychess.net
 
-import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -11,7 +10,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
@@ -65,6 +63,9 @@ sealed interface LanEvent {
  *
  * 不做帧同步：**谁出手谁权威** —— 出手方在棋子停稳后发一条 [LanEvent.RemoteState]，
  * 对端直接用它覆盖自己的局面，误差不会累积。
+ *
+ * 这个类只依赖 `java.net` + kotlinx-coroutines，不碰 Android API，
+ * 所以 Android 和 Windows 桌面版编的是同一份实现，跨端可以直接联机。
  */
 class LanSession private constructor(
     private val socket: Socket,
@@ -93,11 +94,11 @@ class LanSession private constructor(
     }
 
     fun sendShot(pieceId: Int, dx: Float, dy: Float) {
-        send(JSONObject().put("t", "shot").put("id", pieceId).put("dx", dx).put("dy", dy).toString())
+        send(Json.obj("t" to "shot", "id" to pieceId, "dx" to dx, "dy" to dy))
     }
 
     fun sendState(state: String) {
-        send(JSONObject().put("t", "state").put("s", state).toString())
+        send(Json.obj("t" to "state", "s" to state))
     }
 
     fun sendResign() = send("""{"t":"resign"}""")
@@ -119,7 +120,7 @@ class LanSession private constructor(
         try {
             writeRaw(line)
         } catch (e: Exception) {
-            Log.w(TAG, "写入失败", e)
+            log("写入失败", e)
             close("连接已断开")
         }
     }
@@ -142,30 +143,30 @@ class LanSession private constructor(
             if (!closed) close("对手断开了连接")
         } catch (e: Exception) {
             if (!closed) {
-                Log.w(TAG, "读取失败", e)
+                log("读取失败", e)
                 close("对手断开了连接")
             }
         }
     }
 
     private fun handle(line: String) {
-        val json = runCatching { JSONObject(line) }.getOrNull() ?: return
-        when (json.optString("t")) {
-            "hello" -> _events.trySend(LanEvent.PeerJoined(json.optString("name", "对手")))
+        val json = Json.parse(line) ?: return
+        when (Json.str(json, "t")) {
+            "hello" -> _events.trySend(LanEvent.PeerJoined(Json.str(json, "name", "对手")))
             "shot" -> {
-                val id = json.optInt("id", -1)
+                val id = Json.int(json, "id", -1)
                 if (id < 0) return
                 _events.trySend(
                     LanEvent.RemoteShot(
                         pieceId = id,
-                        dx = json.optDouble("dx", 0.0).toFloat(),
-                        dy = json.optDouble("dy", 0.0).toFloat(),
+                        dx = Json.dbl(json, "dx").toFloat(),
+                        dy = Json.dbl(json, "dy").toFloat(),
                     ),
                 )
             }
 
             "state" -> {
-                val s = json.optString("s")
+                val s = Json.str(json, "s")
                 if (s.isNotEmpty()) _events.trySend(LanEvent.RemoteState(s))
             }
 
@@ -179,35 +180,70 @@ class LanSession private constructor(
         const val PORT = 47800
         private const val TAG = "LanSession"
 
-        private fun helloJson(meta: LanMeta): String = JSONObject()
-            .put("t", "hello")
-            .put("v", 1)
-            .put("name", meta.hostName)
-            .put("kk", if (meta.killKing) 1 else 0)
-            .put("bf", if (meta.bottomFirst) 1 else 0)
-            .toString()
+        private fun log(msg: String, e: Throwable? = null) {
+            // 不用 android.util.Log：桌面版也要编这份代码。Android 上 println 一样进 logcat。
+            println("[$TAG] $msg${e?.let { ": ${it.message}" } ?: ""}")
+        }
+
+        private fun helloJson(meta: LanMeta): String = Json.obj(
+            "t" to "hello",
+            "v" to PROTOCOL,
+            "name" to meta.hostName,
+            "kk" to (if (meta.killKing) 1 else 0),
+            "bf" to (if (meta.bottomFirst) 1 else 0),
+        )
 
         private fun parseHello(line: String?): LanMeta? {
             if (line == null) return null
-            val json = runCatching { JSONObject(line) }.getOrNull() ?: return null
-            if (json.optString("t") != "hello") return null
+            val json = Json.parse(line) ?: return null
+            if (Json.str(json, "t") != "hello") return null
             return LanMeta(
-                killKing = json.optInt("kk", 1) == 1,
-                bottomFirst = json.optInt("bf", 1) == 1,
-                hostName = json.optString("name", "房主"),
+                killKing = Json.int(json, "kk", 1) == 1,
+                bottomFirst = Json.int(json, "bf", 1) == 1,
+                hostName = Json.str(json, "name", "房主"),
             )
         }
 
+        /** 协议版本；桌面版与 Android 都是 1。 */
+        const val PROTOCOL = 1
+
         /** 本机的局域网 IPv4，取不到就返回 null。 */
         fun localIpv4(): String? = runCatching {
+            // 网卡可能有好几个（Wi-Fi、有线，还有 WSL / Hyper-V / VPN 之类的虚拟网卡），
+            // 这里按「像不像真的局域网」排个序，给界面显示一个最可能能连的地址。
+            val virtualHints = listOf(
+                "vethernet", "wsl", "hyper-v", "vmware", "virtualbox", "vethernet",
+                "radmin", "tailscale", "zerotier", "tap", "tun", "docker", "loopback",
+            )
             NetworkInterface.getNetworkInterfaces().toList()
                 .asSequence()
                 .filter { it.isUp && !it.isLoopback }
-                .flatMap { it.inetAddresses.toList().asSequence() }
-                .filterIsInstance<Inet4Address>()
-                .firstOrNull { !it.isLoopbackAddress && it.isSiteLocalAddress }
+                .flatMap { ni ->
+                    ni.inetAddresses.toList().asSequence()
+                        .filterIsInstance<Inet4Address>()
+                        .filter { it.isSiteLocalAddress && !it.isLoopbackAddress }
+                        .map { addr -> Triple(scoreInterface(ni.name, addr, virtualHints), addr, ni.name) }
+                }
+                .sortedByDescending { it.first }
+                .firstOrNull()
+                ?.second
                 ?.hostAddress
         }.getOrNull()
+
+        /** 越大越像「玩家真正在用的那块网卡」。 */
+        private fun scoreInterface(name: String, addr: Inet4Address, virtualHints: List<String>): Int {
+            val n = name.lowercase()
+            val virtual = virtualHints.any { n.contains(it) }
+            val octets = addr.address.map { it.toInt() and 0xFF }
+            // 192.168.x 最常见，其次是 10.x / 172.16-31.x
+            val subnetScore = when {
+                octets[0] == 192 && octets[1] == 168 -> 30
+                octets[0] == 10 -> 20
+                octets[0] == 172 && octets[1] in 16..31 -> 15
+                else -> 0
+            }
+            return subnetScore + (if (virtual) -50 else 0)
+        }
 
         /**
          * 房主：开监听端口等对手连进来。取消协程会关掉端口。
@@ -254,13 +290,13 @@ class LanSession private constructor(
                     socket.connect(InetSocketAddress(host.trim(), port), timeoutMs)
                     socket.tcpNoDelay = true
                     // 先自报家门，房主才知道对手叫什么
-                    val hello = JSONObject()
-                        .put("t", "hello")
-                        .put("v", 1)
-                        .put("name", myName)
-                        .put("kk", 1)
-                        .put("bf", 1)
-                        .toString()
+                    val hello = Json.obj(
+                        "t" to "hello",
+                        "v" to PROTOCOL,
+                        "name" to myName,
+                        "kk" to 1,
+                        "bf" to 1,
+                    )
                     val out = OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8)
                     out.write(hello)
                     out.write("\n")

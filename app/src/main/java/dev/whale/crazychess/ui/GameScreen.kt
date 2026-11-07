@@ -36,7 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.whale.crazychess.i18n.I18n
 import dev.whale.crazychess.SoundFx
 import dev.whale.crazychess.game.Difficulty
 import dev.whale.crazychess.game.GameEngine
@@ -303,7 +303,7 @@ fun GameScreen(
         hint = when {
             engine.isOver -> "本局已经结束"
             !engine.isSettled() -> "等棋子停稳再出手"
-            engine.activeSide != controlSide -> "现在轮到${engine.activeSide.label}"
+            engine.activeSide != controlSide -> I18n.turnIsNow(engine.activeSide.label)
             else -> "按住自己的棋子拖动"
         }
         hintId++
@@ -323,7 +323,8 @@ fun GameScreen(
                 s.over -> when {
                     s.draw -> "平局"
                     lan != null -> if (s.winner == mySide) "你赢了" else "对手获胜"
-                    else -> "${s.winner?.label}获胜"
+                    s.winner != null -> I18n.sideWins(s.winner!!.label)
+                    else -> I18n.t("本局结束")
                 }
 
                 lan != null && awaitingSync -> "同步中…"
@@ -331,7 +332,7 @@ fun GameScreen(
                 lan != null -> "轮到你出手"
                 mode == GameMode.VS_ANDROID && s.active == Side.TOP -> "对手正在瞄准…"
                 mode == GameMode.VS_ANDROID -> "轮到你出手"
-                else -> "轮到${s.active.label}出手"
+                else -> I18n.turnOf(s.active.label)
             }
             val landscape = maxWidth > maxHeight
             if (landscape) {
@@ -533,9 +534,12 @@ fun GameScreen(
             text = {
                 Column {
                     Text(
-                        "本局比分  ${engine.scoreP1} : ${engine.scoreP2}\n" +
-                            "胜利条件  ${winCondition.label}\n" +
-                            "已出局  ${32 - engine.totalAlive(Side.BOTTOM) - engine.totalAlive(Side.TOP)} 子",
+                        I18n.pauseInfo(
+                            engine.scoreP1,
+                            engine.scoreP2,
+                            winCondition.label,
+                            32 - engine.totalAlive(Side.BOTTOM) - engine.totalAlive(Side.TOP),
+                        ),
                     )
                     if (lan != null) {
                         Spacer(Modifier.height(8.dp))
@@ -586,7 +590,7 @@ fun GameScreen(
         AlertDialog(
             onDismissRequest = {},
             title = { Text("对手已离开") },
-            text = { Text("$gone\n这局到此为止。") },
+            text = { Text(I18n.peerGone(gone)) },
             confirmButton = { Button(onClick = onExit) { Text("返回菜单") } },
         )
     }
@@ -972,18 +976,18 @@ private fun ResultDialog(
         engine.winner == Side.BOTTOM -> if (engine.mode == GameMode.VS_ANDROID) "你赢了" else "下方获胜"
         else -> "上方获胜"
     }
-    // 认输这类非物理结局会覆盖 status，优先把它显示出来
-    val endReason = engine.status.let { st ->
-        if (st.contains("认输") || st.contains("离开")) st
-        else if (engine.winCondition == WinCondition.KILL_KING) "擒王模式：王被撞出棋盘即落败"
-        else "全歼模式：吃光对方所有棋子"
+    // 认输 / 对手掉线这类非物理结局记在 endNote 上，优先把它显示出来。
+    // 这里不能用 status.contains("认输") 判断，切到英文以后那句就不含中文了。
+    val endReason = engine.endNote ?: when {
+        engine.winCondition == WinCondition.KILL_KING -> "擒王模式：王被撞出棋盘即落败"
+        else -> "全歼模式：吃光对方所有棋子"
     }
     AlertDialog(
         onDismissRequest = {},
         title = { Text(title, style = MaterialTheme.typography.headlineLarge) },
         text = {
             Column {
-                Text("比分  ${engine.scoreP1} : ${engine.scoreP2}")
+                Text(I18n.scoreLine(engine.scoreP1, engine.scoreP2))
                 Spacer(Modifier.height(6.dp))
                 Text(
                     endReason,

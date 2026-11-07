@@ -66,6 +66,8 @@ fun App() {
     var match by remember { mutableStateOf<Match?>(null) }
     val context = LocalContext.current
     LaunchedEffect(Unit) { SoundFx.init(context) }
+    // 语言：第一次启动跟随系统，之后记住手动切过的选择
+    LaunchedEffect(Unit) { Prefs.init(context) }
 
     // 退出对局（不管哪种模式）都要把局域网连接放掉，否则对端会一直等着
 

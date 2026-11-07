@@ -1,5 +1,6 @@
 package dev.whale.crazychess.game
 
+import dev.whale.crazychess.i18n.I18n
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -44,11 +45,14 @@ object Rules {
     const val FALL_FX_MS = 520L
 }
 
-enum class Side(val label: String) {
+enum class Side(val key: String) {
     BOTTOM("下方"),
     TOP("上方");
 
     val other: Side get() = if (this == BOTTOM) TOP else BOTTOM
+
+    /** 显示名。切语言时会变，所以每次现取，不缓存。 */
+    val label: String get() = I18n.t(key)
 }
 
 /**
@@ -58,7 +62,7 @@ enum class Side(val label: String) {
  */
 enum class PieceType(
     val glyph: String,
-    val label: String,
+    val key: String,
     val mass: Float,
     val points: Int,
     val damping: Float,
@@ -69,6 +73,8 @@ enum class PieceType(
     BISHOP("♝", "象", 1.5f, 20, 1.2f),
     QUEEN("♛", "后", 2.2f, 50, 1.2f),
     KING("♚", "王", 3.0f, 100, 6.0f);
+
+    val label: String get() = I18n.t(key)
 
     /** 原版 getStrongestFigure 的优先级：后 > 车 > 马 > 象 > 兵 > 王。 */
     val strength: Int
@@ -82,21 +88,30 @@ enum class PieceType(
         }
 }
 
-enum class WinCondition(val label: String) {
+enum class WinCondition(val key: String) {
     KILL_KING("擒王"),
     KILL_EM_ALL("全歼"),
+    ;
+
+    val label: String get() = I18n.t(key)
 }
 
-enum class GameMode(val label: String) {
+enum class GameMode(val key: String) {
     VS_ANDROID("人机对战"),
     VS_HUMAN("双人对战"),
     LAN("局域网对战"),
+    ;
+
+    val label: String get() = I18n.t(key)
 }
 
-enum class Difficulty(val label: String, val aimNoiseDeg: Float, val power: Float) {
+enum class Difficulty(val key: String, val aimNoiseDeg: Float, val power: Float) {
     EASY("轻松", 14f, 0.82f),
     NORMAL("标准", 5f, 0.95f),
     HARD("凶狠", 1.5f, 1.06f),
+    ;
+
+    val label: String get() = I18n.t(key)
 }
 
 class Piece(
@@ -178,6 +193,10 @@ class GameEngine(
     var status: String = ""
         private set
 
+    /** 认输 / 对手掉线这类"非物理"结束语（中文原文，界面负责翻译）。物理分胜负时为 null。 */
+    var endNote: String? = null
+        private set
+
     init {
         reset()
     }
@@ -193,10 +212,11 @@ class GameEngine(
         winner = null
         isDraw = false
         activeSide = if (bottomMovesFirst) Side.BOTTOM else Side.TOP
+        endNote = null
         status = if (mode == GameMode.VS_ANDROID && activeSide == Side.TOP) {
-            "AI 正在瞄准…"
+            I18n.t("AI 正在瞄准…")
         } else {
-            "轮到${activeSide.label}出手"
+            I18n.turnOf(activeSide.label)
         }
         var id = 0
         for (side in Side.entries) {
@@ -259,9 +279,9 @@ class GameEngine(
     private fun endTurn() {
         activeSide = activeSide.other
         status = if (mode == GameMode.VS_ANDROID && activeSide == Side.TOP) {
-            "对手正在瞄准…"
+            I18n.t("对手正在瞄准…")
         } else {
-            "轮到${activeSide.label}出手"
+            I18n.turnOf(activeSide.label)
         }
     }
 
@@ -434,14 +454,14 @@ class GameEngine(
     private fun finish(side: Side) {
         isOver = true
         winner = side
-        status = "${side.label}获胜"
+        status = I18n.sideWins(side.label)
     }
 
     private fun finishDraw() {
         isOver = true
         winner = null
         isDraw = true
-        status = "平局"
+        status = I18n.t("平局")
     }
 
     // ---------------------------------------------------------------- 局域网同步
@@ -536,12 +556,12 @@ class GameEngine(
         }
         status = if (isOver) {
             when {
-                isDraw -> "平局"
-                winner != null -> "${winner!!.label}获胜"
-                else -> "本局结束"
+                isDraw -> I18n.t("平局")
+                winner != null -> I18n.sideWins(winner!!.label)
+                else -> I18n.t("本局结束")
             }
         } else {
-            "轮到${activeSide.label}出手"
+            I18n.turnOf(activeSide.label)
         }
         return true
     }
@@ -554,7 +574,10 @@ class GameEngine(
         } else {
             finish(w)
         }
-        if (reason != null) status = reason
+        if (reason != null) {
+            endNote = reason
+            status = reason
+        }
     }
 
     // ---------------------------------------------------------------- AI

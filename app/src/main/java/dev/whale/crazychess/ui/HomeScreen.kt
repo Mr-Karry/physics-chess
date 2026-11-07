@@ -33,7 +33,6 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.FilledTonalButton
@@ -54,12 +53,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import dev.whale.crazychess.game.Difficulty
 import dev.whale.crazychess.game.GameMode
 import dev.whale.crazychess.game.PieceType
 import dev.whale.crazychess.game.Side
 import dev.whale.crazychess.game.WinCondition
+import dev.whale.crazychess.i18n.I18n
+import dev.whale.crazychess.i18n.Lang
+import dev.whale.crazychess.net.LanAdvertiser
+import dev.whale.crazychess.net.LanFinder
 import dev.whale.crazychess.net.LanMeta
+import dev.whale.crazychess.net.LanRoom
 import dev.whale.crazychess.net.LanSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -94,35 +100,62 @@ fun HomeScreen(
     val myName = nick.trim().ifBlank { if (mode == GameMode.LAN) "房主" else "客人" }
     val localIp = remember { LanSession.localIpv4() }
 
+    // 自动发现：客人侧广播探测，房主侧广播应答。只在「局域网对战」页里跑，离开就停。
+    val finder = remember { LanFinder() }
+    val rooms by finder.rooms.collectAsState()
+    var advertiser by remember { mutableStateOf<LanAdvertiser?>(null) }
+    var myRoomCode by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(mode) {
+        if (mode == GameMode.LAN) finder.start(scope) else finder.stop()
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            finder.stop()
+            advertiser?.stop()
+        }
+    }
+
     val startHosting: () -> Unit = {
         if (!lanPhase.busy) {
             lanPhase = LanPhase.Hosting
             lanJob = scope.launch {
+                val meta = LanMeta(
+                    killKing = win == WinCondition.KILL_KING,
+                    bottomFirst = bottomFirst,
+                    hostName = myName,
+                )
+                // 一边等 TCP 连接，一边用 UDP 广播让同一网络里的客人能自动发现这个房间
+                val adv = LanAdvertiser(meta, LanSession.PORT)
+                advertiser = adv
+                myRoomCode = adv.code
+                adv.start(scope)
                 try {
-                    val meta = LanMeta(
-                        killKing = win == WinCondition.KILL_KING,
-                        bottomFirst = bottomFirst,
-                        hostName = myName,
-                    )
                     val session = LanSession.hostAndWait(meta)
+                    adv.stop()
+                    advertiser = null
                     lanPhase = LanPhase.Idle
                     // 房主这边还不知道对手叫啥，等对手的 hello 到了再补上
                     onLanStart(session, Side.BOTTOM, meta, myName, "")
                 } catch (e: CancellationException) {
+                    adv.stop()
+                    advertiser = null
                     throw e
                 } catch (e: Exception) {
-                    lanPhase = LanPhase.Failed("开房间失败：${e.message ?: "未知错误"}")
+                    adv.stop()
+                    advertiser = null
+                    lanPhase = LanPhase.Failed(I18n.hostFailed(e.message ?: "未知错误"))
                 }
             }
         }
     }
 
-    val startJoining: (String) -> Unit = { ip ->
+    val startJoining: (String, Int) -> Unit = { ip, port ->
         if (!lanPhase.busy) {
             lanPhase = LanPhase.Joining
             lanJob = scope.launch {
                 try {
-                    val (session, meta) = LanSession.join(ip, myName = myName)
+                    val (session, meta) = LanSession.join(ip, port, myName = myName)
                     lanPhase = LanPhase.Idle
                     // 客人这边从 hello 里已经知道房主叫什么了
                     onLanStart(session, Side.TOP, meta, myName, meta.hostName)
@@ -130,7 +163,10 @@ fun HomeScreen(
                     throw e
                 } catch (e: Exception) {
                     lanPhase = LanPhase.Failed(
-                        "连不上 $ip：${e.message ?: "确认两台手机在同一个 Wi-Fi、且房主已开房间"}",
+                        I18n.joinFailed(
+                            ip,
+                            e.message ?: "确认两台设备在同一个网络、且房主已开房间",
+                        ),
                     )
                 }
             }
@@ -179,6 +215,21 @@ fun HomeScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // 语言开关：中文 / English
+            val lang = currentLang()
+            Surface(
+                onClick = { I18n.toggle() },
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ) {
+                Text(
+                    text = if (lang == Lang.EN) "EN" else "中",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
             PieceHalo(colors)
         }
 
@@ -258,9 +309,18 @@ fun HomeScreen(
                 colors = colors,
                 nick = nick,
                 onNickChange = { nick = it.take(10) },
+                rooms = rooms,
+                myRoomCode = myRoomCode,
+                onRefresh = { finder.poke() },
                 onHost = startHosting,
-                onJoin = startJoining,
-                onCancel = cancelLan,
+                onJoinRoom = { room -> startJoining(room.host, room.port) },
+                onJoinIp = { startJoining(it, LanSession.PORT) },
+                onCancel = {
+                    cancelLan()
+                    advertiser?.stop()
+                    advertiser = null
+                    myRoomCode = null
+                },
             )
         }
 
@@ -506,8 +566,10 @@ private sealed interface LanPhase {
 
 
 /**
- * 局域网面板：开房 / 加入。没有服务器也没有发现协议 —— 房主把本机 IP 念给对面，
- * 对面填进去连同一个端口就行，够用且不看路由器脸色。
+ * 局域网面板：自动发现 + IP 直连兜底。
+ *
+ * 正常流程不用念 IP：客人这一侧会在列表里直接看到同一网络里的房间，点一下就进。
+ * 路由器禁广播、或者两台设备跨网段时，展开「以 IP 直连」还能照旧手填地址。
  */
 @Composable
 private fun LanPanel(
@@ -516,20 +578,27 @@ private fun LanPanel(
     colors: BoardColors,
     nick: String,
     onNickChange: (String) -> Unit,
+    rooms: List<LanRoom>,
+    myRoomCode: String?,
+    onRefresh: () -> Unit,
     onHost: () -> Unit,
-    onJoin: (String) -> Unit,
+    onJoinRoom: (LanRoom) -> Unit,
+    onJoinIp: (String) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var ip by remember { mutableStateOf("") }
+    var showIp by remember { mutableStateOf(false) }
     val busy = phase.busy
+    // 自己开的房间别在自己的列表里露出来
+    val visible = rooms.filter { myRoomCode == null || it.id != myRoomCode }
 
     Card(
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(14.dp)) {
             Text(
@@ -539,13 +608,13 @@ private fun LanPanel(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "房主点「创建房间」并把这串地址念给对面，对面填地址点「加入房间」。",
+                "房主点「创建房间」，对面在下面的列表里点一下就能加入；找不到再展开「以 IP 直连」。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "本机地址  ${localIp ?: "没连上 Wi-Fi"}",
+                text = I18n.localIpText(localIp),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
                 color = colors.sideA,
@@ -554,13 +623,13 @@ private fun LanPanel(
             OutlinedTextField(
                 value = nick,
                 onValueChange = onNickChange,
-                label = { Text("你的昵称 ${nick.length}/10") },
+                label = { Text(I18n.nickLabel(nick.length, 10)) },
                 placeholder = { Text("留空就是「房主 / 客人」") },
                 singleLine = true,
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
             FilledTonalButton(
                 onClick = onHost,
                 enabled = !busy,
@@ -574,24 +643,83 @@ private fun LanPanel(
                     Text("取消等待")
                 }
             }
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = ip,
-                onValueChange = { ip = it.trim() },
-                label = { Text("房主地址，例如 192.168.1.12") },
-                singleLine = true,
-                enabled = !busy,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+
+            Spacer(Modifier.height(14.dp))
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(6.dp))
-            Button(
-                onClick = { onJoin(ip) },
-                enabled = !busy && ip.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(24.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(if (phase is LanPhase.Joining) "正在连接…" else "加入房间")
+                Text(
+                    "自动发现",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                if (visible.isNotEmpty()) {
+                    Text(
+                        I18n.discoveredCount(visible.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                TextButton(onClick = onRefresh, enabled = !busy) { Text("刷新") }
+            }
+            if (visible.isEmpty()) {
+                Text(
+                    if (busy) "正在搜索…" else "没有发现在线房间",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "两台设备都要在同一个局域网，且允许访问网络。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                )
+            } else {
+                visible.forEach { room ->
+                    RoomRow(
+                        room = room,
+                        accent = colors,
+                        enabled = !busy,
+                        onClick = { onJoinRoom(room) },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                Text(
+                    "点一下直接加入",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+            TextButton(
+                onClick = { showIp = !showIp },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+            ) {
+                Text(if (showIp) "隐藏 IP 输入" else "以 IP 直连")
+            }
+            if (showIp) {
+                OutlinedTextField(
+                    value = ip,
+                    onValueChange = { ip = it.trim() },
+                    label = { Text("房主地址，例如 192.168.1.12") },
+                    singleLine = true,
+                    enabled = !busy,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = { onJoinIp(ip) },
+                    enabled = !busy && ip.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(24.dp),
+                ) {
+                    Text(if (phase is LanPhase.Joining) "正在连接…" else "加入房间")
+                }
             }
             if (phase is LanPhase.Joining) {
                 Spacer(Modifier.height(2.dp))
@@ -608,6 +736,52 @@ private fun LanPanel(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+        }
+    }
+}
+
+/** 自动发现到的房间：一行一个，点一下就连过去。 */
+@Composable
+private fun RoomRow(
+    room: LanRoom,
+    accent: BoardColors,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(accent.sideA),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = I18n.roomTitle(room.name, room.id),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                )
+                Text(
+                    text = I18n.roomDetail(room.killKing, room.host),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = "›",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

@@ -29,3 +29,6 @@ local.properties
 # 系统
 .DS_Store
 Thumbs.db
+
+# 桌面版打包产物（jlink 出来的 jre 太大，不进仓库）
+desktop/dist/

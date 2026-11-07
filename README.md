@@ -4,8 +4,9 @@
 
 # Physics Chess
 
-![release](https://img.shields.io/badge/release-v1.3-5B6CE8)
+![release](https://img.shields.io/badge/release-v1.4-5B6CE8)
 ![platform](https://img.shields.io/badge/Android-7.0%2B-3DDC84)
+![platform](https://img.shields.io/badge/Windows-10%2F11-0078D4)
 ![kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4)
 
@@ -40,8 +41,13 @@
 ## 特性
 
 - **完整玩法复刻**：质量 / 阻尼 / 分值 / 出局判定 / 计分口径全部对齐原版；甩子速度按原版换算 `速度(格/秒) = 拖拽格数`。
-- **局域网对战**：两台手机连同一个 Wi-Fi，房主开房、客人填 IP 直连（`47800` 端口，无服务器、无中继）；
+- **局域网对战 + 自动发现**：两台设备连同一个 Wi-Fi，房主点「创建房间」，对面在「自动发现」列表里
+  点一下就能进（UDP 广播探测，无需记 IP）；找不到还能退回手填 IP 直连（`47800` 端口，无服务器、无中继）。
   谁出手谁权威 —— 出手方停稳后发一份局面快照给对方覆盖，误差不累积。
+- **中英双语**：界面、规则名、引擎状态、联机提示全部双语，首页右上角一键切换（`中 / EN`），
+  选择会记住；首次启动跟随系统语言。
+- **同一份代码跑两端**：引擎 / 协议 / 发现 / 文案是共享的纯 JVM 源码，
+  Windows 桌面版（Kotlin + Swing）和 Android 版可以**跨端联机**。
 - **人机 + 双人**：AI 复刻原版启发式（最强子打对面最强子、目标贴边时换最远子、18% 概率换次强子直取对方王），三档难度只调精度与力度。
 - **选颜色 = 选先后手**：先手由颜色决定，与坐哪边无关（原版语义）。
 - **动态取色**：棋子、棋盘、拖动条、图标全部取自 Material You 配色，跟随壁纸变化；深色模式另有一套明度处理。
@@ -51,11 +57,15 @@
 
 ## 局域网对战怎么用
 
-1. 两台手机连**同一个 Wi-Fi**。
+1. 两台设备（手机 / 平板 / Windows 电脑都行）连**同一个 Wi-Fi**。
 2. 两边都可以先填个昵称（最多 10 字），对局里计分卡就显示这个名字。
-3. 房主：首页选「局域网对战」→「创建房间」，界面上会显示本机地址（例如 `192.168.1.12`）。
-4. 客人：同样选「局域网对战」，把地址填进输入框 →「加入房间」。
+3. 房主：首页选「局域网对战」→「创建房间」，等对面进来。
+4. 客人：同样选「局域网对战」，稍等一两秒，「自动发现」里就会列出房主的房间，点一下即加入。
+   - 列表里没有？点「刷新」再等两秒；还是没有就展开「以 IP 直连」，把房主界面上显示的地址填进去。
 5. 连上即自动开局：**房主执下方、客人执上方**，先后手和胜利条件由房主带过去。
+
+自动发现走 UDP：客人向广播地址的 `47801` 发 probe（带自己的应答端口），房主单播回一条 offer。
+客人用的是**临时端口**而不是固定端口，所以同一台机器上开两个实例也不会互抢。
 
 客人的界面是**镜像**的：自己的棋子在屏幕下方、对手在上方，不用把手机倒过来看。
 镜像只翻坐标不翻画布，棋子字形始终正立。双方昵称通过 `hello` 交换，对局中一直显示。
@@ -77,6 +87,9 @@
 | 架构 | `GameEngine` 纯 Kotlin 无 Android 依赖，UI 每帧取快照驱动重组 |
 | 音效 | `SoundPool`（出手 / 决胜 / 欢呼，素材取自原版 `assets/mfx`） |
 | 图标 | 自适应图标（渐变底 + 光环王冠 + Android 13 单色层） |
+| 桌面版 | Kotlin + Swing（JDK 17 自带），共享同一份引擎 / 协议 / 发现 / i18n 源码 |
+| 自动发现 | UDP 广播 probe → 单播 offer，`LanDiscovery.kt` 纯 `java.net`，两端共用 |
+| i18n | 中文原文当 key 查字典（查不到原样返回），Compose 侧用同签名 `Text` 包装器接管全部文案 |
 
 ## 构建
 
@@ -109,6 +122,21 @@ adb shell am start -n dev.whale.crazychess/.MainActivity
 kotlin.compiler.execution.strategy=in-process
 ```
 
+## Windows 桌面版
+
+`desktop/` 下是一个 Swing 实现，复用了 `GameEngine`、`LanSession`、`LanDiscovery`、`Json`、`I18n`
+这五个纯 JVM 文件，所以规则、联机协议、自动发现、文案与手机端完全一致，可以跨端对战。
+
+```bash
+bash desktop/build.sh     # 离线编译（不需要外网，用 Gradle 缓存里的 kotlin-compiler-embeddable）
+bash desktop/package.sh   # 打包：jlink 精简 JRE + jar + 启动脚本 → desktop/dist/PhysicsChess
+```
+
+产物 `desktop/dist/PhysicsChess/PhysicsChess.bat`，双击即可运行；整个目录拷到别的 Windows 机器上
+也能直接跑（自带运行时，不用装 Java）。发布包是 `desktop/dist/PhysicsChess-1.4-win.zip`。
+
+> 操作与手机一致：按住自己的子朝目标方向拖、松手甩出；`Esc` / 暂停按钮可以认输或退出对局。
+
 ## 版本记录
 
 | 版本 | 内容 |
@@ -117,6 +145,7 @@ kotlin.compiler.execution.strategy=in-process
 | 1.1 | 局域网对战（TCP 47800，谁出手谁权威），暂停里可认输 |
 | 1.2 | 联机昵称（10 字上限）、客人视角棋盘镜像、沉浸式状态栏 |
 | 1.3 | 结算大拇哥朝向胜利方；创建/加入房间可取消 |
+| 1.4 | 局域网 UDP 广播自动发现；中英双语切换；新增 Windows 桌面版（跨端联机） |
 
 1.1–1.2 只做过内部构建，1.3 是 1.0 之后第一个正式发布版。
 
