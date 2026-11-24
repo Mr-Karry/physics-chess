@@ -11,7 +11,6 @@
 
 | 项 | 值 |
 | --- | --- |
-| 工程目录 | `D:\whaletest\crazychess` |
 | 包名 | `dev.whale.crazychess` |
 | 版本 | `versionCode = 1` / `versionName = "1.0"` |
 | 技术栈 | Kotlin + Jetpack Compose + Material 3（minSdk 24 / compileSdk 35 / targetSdk 35） |
