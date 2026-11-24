@@ -35,9 +35,22 @@
 
 ## 截图
 
-| 首页 | 对局（浅色） | 对局（深色） |
-| :--: | :--: | :--: |
-| ![首页](docs/01-home-light.png) | ![对局](docs/02-game-light.png) | ![深色](docs/03-game-dark.png) |
+<p align="center">
+  <img src="docs/01-home-light.png" width="200" alt="首页" />
+  <img src="docs/02-game-light.png" width="200" alt="对局（浅色）" />
+  <img src="docs/03-game-dark.png" width="200" alt="对局（深色）" />
+</p>
+<p align="center">
+  <sub>Android：首页 · 对局（浅色）· 对局（深色）</sub>
+</p>
+
+<p align="center">
+  <img src="docs/04-desktop-home.png" width="420" alt="Windows 版首页" />
+  <img src="docs/05-desktop-lan.png" width="420" alt="Windows 版自动发现" />
+</p>
+<p align="center">
+  <sub>Windows 桌面版：首页 · 局域网自动发现</sub>
+</p>
 
 ## 特性
 
