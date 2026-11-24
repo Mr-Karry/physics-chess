@@ -9,6 +9,7 @@
 ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D4)
 ![kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF)
 ![compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4)
+![ai-assisted](https://img.shields.io/badge/AI-assisted-8A2BE2)
 
 **把棋子甩出去，把对手的王撞出棋盘。**
 
@@ -180,6 +181,18 @@ app/src/main/java/dev/whale/crazychess/
 ```
 
 开发过程与踩坑记录见 [PROGRESS.md](PROGRESS.md)。
+
+## 这个项目是怎么写出来的
+
+代码主体由 AI 编程助手（DeepSeek Harness 驱动的编码 agent）与作者协作完成：
+作者定方向、拍设计与交互细节，并在 Android 模拟器 / 真机和 Windows 上逐项验收；
+agent 负责实现、重构、写测试和排查问题。
+
+因此：
+
+- 代码能跑、有回归测试（`app/src/test` 下的 AI 难度分布测试等），但**没有经过生产级安全审计**，请按 hobby 项目使用；
+- 提交历史里的措辞可能不太像人手写的，这是正常的；
+- 发现问题请直接开 issue：对行为负责，不拿“AI 写的”当挡箭牌。
 
 ## 致谢
 
